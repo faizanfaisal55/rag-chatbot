@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-dotenv
+langchain
+langchain-community
+langchain-text-splitters
+pypdf
+sentence-transformers
+qdrant-client
+python-multipart
+numpy
+pydantic
+httpx
