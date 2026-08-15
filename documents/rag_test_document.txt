@@ -1,0 +1,33 @@
+RAG Chatbot Test Document
+
+Title: Faizan Faisal — AI Student Profile
+
+Faizan Faisal is a student working on a Retrieval-Augmented Generation (RAG) chatbot project.
+
+Education:
+Faizan is studying Artificial Intelligence and is currently in the sixth semester of his undergraduate degree.
+
+Technical Skills:
+- Python
+- Machine Learning
+- Deep Learning
+- Natural Language Processing
+- Computer Vision
+- FastAPI
+- Qdrant
+- BM25
+- Hybrid Search
+
+Current Project:
+The current project is a document-based RAG chatbot. The system uses document ingestion, embeddings, vector search, BM25 retrieval, hybrid retrieval, and Gemini for grounded answer generation.
+
+The chatbot is designed to answer questions using uploaded documents rather than outside knowledge.
+
+Testing:
+The system should support follow-up questions. For example, after asking "Who is Faizan?", a user may ask "What are his technical skills?" The system should understand that "his" refers to Faizan.
+
+Privacy:
+The chatbot should not reveal sensitive personal information such as CNIC numbers, bank account numbers, phone numbers, email addresses, passwords, or authentication credentials.
+
+Goal:
+The goal is to create a reliable, document-grounded chatbot that can retrieve relevant information and clearly state when information cannot be found in the uploaded documents.

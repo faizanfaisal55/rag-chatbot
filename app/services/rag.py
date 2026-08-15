@@ -5,6 +5,7 @@ from app.db.qdrant_connection import client, COLLECTION_NAME
 from app.ingestion.embedder import model
 from app.retrieval.hybrid_search import HybridRetriever
 from app.llm.gemini import rewrite_question, generate_answer
+from app.services.hallucination_check import check_groundedness
 
 
 # ==========================================================
@@ -15,14 +16,6 @@ VECTOR_LIMIT = 30
 HYBRID_TOP_K = 8
 FINAL_TOP_K = 6
 
-# Minimum top vector similarity score required to treat a
-# question as relevant to the knowledge base WHEN there is
-# NO explicit filename/keyword match in the query.
-#
-# If there IS a keyword match (e.g. "Umair" -> Umair.pdf),
-# we skip this check entirely and trust the keyword —
-# short direct questions can score low on raw cosine
-# similarity despite being clearly relevant.
 MIN_VECTOR_SIMILARITY = 0.28
 MIN_VECTOR_SIMILARITY_NO_KEYWORD = 0.40
 
@@ -32,14 +25,6 @@ MIN_VECTOR_SIMILARITY_NO_KEYWORD = 0.40
 # ==========================================================
 
 def _normalize_source(source: object) -> str:
-    """
-    Normalize document filenames.
-
-    Examples:
-        Umair.pdf -> umair.pdf
-        Umair.pdf.pdf -> umair.pdf
-    """
-
     if not source:
         return ""
 
@@ -53,10 +38,6 @@ def _normalize_source(source: object) -> str:
 
 
 def _source_display_name(source: object) -> str:
-    """
-    Keep filename readable for the UI.
-    """
-
     if not source:
         return ""
 
@@ -70,7 +51,6 @@ def _source_display_name(source: object) -> str:
 
 
 def _clean_text(text: object) -> str:
-
     if text is None:
         return ""
 
@@ -82,10 +62,6 @@ def _clean_text(text: object) -> str:
 # ==========================================================
 
 def _extract_query_keywords(query: str) -> List[str]:
-    """
-    Extract meaningful keywords from the query.
-    """
-
     if not query:
         return []
 
@@ -130,18 +106,6 @@ def _has_keyword_match(
     query: str,
     vector_results: List[Dict],
 ) -> bool:
-    """
-    Check whether any retrieved document's filename
-    explicitly matches a keyword from the query.
-
-    This is used as a relevance signal that is more
-    reliable than raw vector similarity alone, since
-    short/direct questions (e.g. "Who is Umair?") can
-    score lower on cosine similarity than longer generic
-    questions that happen to share vocabulary with
-    unrelated document text.
-    """
-
     keywords = _extract_query_keywords(query)
 
     if not keywords:
@@ -243,9 +207,6 @@ def _vector_search(
 # ==========================================================
 
 def _load_all_documents() -> List[Dict]:
-    """
-    Load all chunks from Qdrant for BM25.
-    """
 
     documents = []
 
@@ -309,14 +270,6 @@ def _select_target_source(
     query: str,
     vector_results: List[Dict],
 ) -> Optional[str]:
-    """
-    Select the most likely document.
-
-    Priority:
-
-    1. Explicit filename/person match.
-    2. Strong repeated source evidence.
-    """
 
     if not vector_results:
         return None
@@ -326,10 +279,6 @@ def _select_target_source(
     )
 
     source_scores = defaultdict(float)
-
-    # ------------------------------------------------------
-    # 1. Filename keyword matching
-    # ------------------------------------------------------
 
     for document in vector_results:
 
@@ -364,10 +313,6 @@ def _select_target_source(
                 matches * 20.0
             )
 
-    # ------------------------------------------------------
-    # 2. Aggregate vector evidence
-    # ------------------------------------------------------
-
     for rank, document in enumerate(
         vector_results,
         start=1
@@ -387,7 +332,6 @@ def _select_target_source(
             )
         )
 
-        # Higher-ranked results contribute more.
         source_scores[source] += (
             score * (1.0 / rank)
         )
@@ -409,9 +353,6 @@ def _filter_by_source(
     documents: List[Dict],
     selected_source: str,
 ) -> List[Dict]:
-    """
-    Keep only chunks belonging to the selected document.
-    """
 
     target = _normalize_source(
         selected_source
@@ -641,19 +582,6 @@ def ask_rag(
         len(vector_results)
     )
 
-    # ------------------------------------------------------
-    # 2b. No-Match / Relevance Gate
-    #
-    # If there's an explicit filename/keyword match (e.g.
-    # "Umair" -> Umair.pdf), trust it and skip the score
-    # check entirely — short direct questions can score low
-    # on cosine similarity despite being clearly relevant.
-    #
-    # Only enforce the strict score threshold when there's
-    # no keyword evidence at all (generic/unrelated
-    # questions).
-    # ------------------------------------------------------
-
     top_score = max(
         (doc.get("similarity", 0.0) for doc in vector_results),
         default=0.0,
@@ -722,11 +650,7 @@ def ask_rag(
     )
 
     # ======================================================
-    # 5. IMPORTANT:
-    # Filter BOTH retrieval sources to the selected
-    # document BEFORE HybridRetriever.
-    #
-    # This matches your current HybridRetriever API.
+    # 5. Filter to selected document
     # ======================================================
 
     isolated_vector_results = (
@@ -845,6 +769,24 @@ def ask_rag(
     )
 
     # ======================================================
+    # 9b. Hallucination Check
+    #
+    # Rule-based groundedness signal: checks whether factual
+    # claims in the generated answer (proper nouns, numbers)
+    # appear in the retrieved context.
+    # ======================================================
+
+    groundedness = check_groundedness(answer, context)
+
+    if groundedness["flagged"]:
+        print(
+            "\n⚠️  GROUNDEDNESS WARNING — score:",
+            groundedness["groundedness_score"],
+            "| missing claims:",
+            groundedness["claims_missing"],
+        )
+
+    # ======================================================
     # 10. Sources
     # ======================================================
 
@@ -873,4 +815,5 @@ def ask_rag(
         "answer": answer,
         "sources": sources,
         "retrieval_question": resolved_question,
+        "groundedness": groundedness,
     }

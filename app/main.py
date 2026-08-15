@@ -5,10 +5,13 @@ from pydantic import BaseModel, Field
 import os
 import shutil
 import traceback
+import requests
 
 from app.ingestion.embedder import generate_embeddings
 from app.ingestion.pdf_loader_fitz import load_pdf, load_pdf_pages
 from app.ingestion.text_loader import load_text_file
+from app.ingestion.docx_loader import load_docx_file
+from app.ingestion.web_loader import load_web_page, get_page_title
 from app.ingestion.chunker import chunk_text, chunk_pages
 from app.services.rag import ask_rag
 from app.db.upload_vectors import store_vectors
@@ -44,7 +47,7 @@ app.add_middleware(
 # Supported Upload Extensions
 # ============================================================
 
-SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md"}
+SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx"}
 
 
 # ============================================================
@@ -59,6 +62,10 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     history: list[ChatMessage] = Field(default_factory=list)
+
+
+class UrlUploadRequest(BaseModel):
+    url: str
 
 
 # ============================================================
@@ -145,7 +152,7 @@ def read_pdf():
 
 
 # ============================================================
-# UPLOAD FILE (PDF / TXT / MD)
+# UPLOAD FILE (PDF / TXT / MD / DOCX)
 # ============================================================
 
 @app.post("/upload")
@@ -217,6 +224,8 @@ async def upload_file(file: UploadFile = File(...)):
             pages = load_pdf_pages(file_path)
         elif file_ext in (".txt", ".md"):
             pages = load_text_file(file_path)
+        elif file_ext == ".docx":
+            pages = load_docx_file(file_path)
         else:
             raise HTTPException(
                 status_code=400,
@@ -300,6 +309,126 @@ async def upload_file(file: UploadFile = File(...)):
     finally:
 
         await file.close()
+
+
+# ============================================================
+# UPLOAD FROM WEBSITE URL
+# ============================================================
+
+@app.post("/upload-url")
+async def upload_url(request: UrlUploadRequest):
+
+    url = request.url.strip()
+
+    if not url:
+        raise HTTPException(
+            status_code=400,
+            detail="No URL provided."
+        )
+
+    try:
+
+        print("\n" + "=" * 70)
+        print("STARTING URL UPLOAD")
+        print("=" * 70)
+
+        print("URL:", url)
+
+        # ----------------------------------------------------
+        # STEP 1 — Fetch + Extract Content
+        # ----------------------------------------------------
+
+        print("\n[1/3] Fetching and extracting page content...")
+
+        try:
+            pages = load_web_page(url)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=str(e)
+            )
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not fetch URL: {str(e)}"
+            )
+
+        print("Pages extracted:", len(pages))
+
+        if not pages:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable content found at this URL."
+            )
+
+        # ----------------------------------------------------
+        # STEP 2 — Create chunks
+        # ----------------------------------------------------
+
+        print("\n[2/3] Creating chunks...")
+
+        chunks = chunk_pages(pages)
+
+        print("Chunks created:", len(chunks))
+
+        if not chunks:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not create chunks from this page."
+            )
+
+        # ----------------------------------------------------
+        # STEP 3 — Generate embeddings + Qdrant
+        # ----------------------------------------------------
+
+        print(
+            "\n[3/3] Generating embeddings "
+            "and storing vectors..."
+        )
+
+        page_title = get_page_title(url)
+        source_name = f"{page_title} ({url})"
+
+        total_vectors = store_vectors(
+            chunks,
+            source_name
+        )
+
+        print("Vectors stored:", total_vectors)
+
+        print("\n" + "=" * 70)
+        print("URL UPLOAD SUCCESSFUL")
+        print("=" * 70)
+
+        return {
+            "source": source_name,
+            "url": url,
+            "message": "Page fetched and stored successfully",
+            "total_chunks": len(chunks),
+            "vectors_stored": total_vectors
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+
+        print("\n" + "=" * 70)
+        print("URL UPLOAD ERROR")
+        print("=" * 70)
+
+        print("Error type:", type(e).__name__)
+        print("Error message:", str(e))
+
+        print("\nFULL TRACEBACK:")
+        traceback.print_exc()
+
+        print("=" * 70 + "\n")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process URL: {str(e)}"
+        )
 
 
 # ============================================================
