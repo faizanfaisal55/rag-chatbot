@@ -2,7 +2,7 @@ from typing import List, Dict, Optional
 from collections import defaultdict
 import re
 from app.db.qdrant_connection import client, COLLECTION_NAME
-from app.ingestion.embedder import model
+from app.ingestion.embedder import get_model
 from app.retrieval.hybrid_search import HybridRetriever
 from app.llm.gemini import rewrite_question, generate_answer
 from app.services.hallucination_check import check_groundedness
@@ -146,7 +146,7 @@ def _vector_search(
 
     print("Creating query embedding...")
 
-    query_vector = model.encode(
+    query_vector = get_model().encode(
         query,
         normalize_embeddings=True,
     ).tolist()

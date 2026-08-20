@@ -6,6 +6,7 @@ import os
 import shutil
 import traceback
 import requests
+from collections import defaultdict
 
 from app.ingestion.embedder import generate_embeddings
 from app.ingestion.pdf_loader_fitz import load_pdf, load_pdf_pages
@@ -13,8 +14,9 @@ from app.ingestion.text_loader import load_text_file
 from app.ingestion.docx_loader import load_docx_file
 from app.ingestion.web_loader import load_web_page, get_page_title
 from app.ingestion.chunker import chunk_text, chunk_pages
-from app.services.rag import ask_rag
+from app.services.rag import ask_rag, _load_all_documents
 from app.db.upload_vectors import store_vectors
+from app.db.qdrant_connection import client, COLLECTION_NAME
 
 
 # ============================================================
@@ -429,6 +431,80 @@ async def upload_url(request: UrlUploadRequest):
             status_code=500,
             detail=f"Failed to process URL: {str(e)}"
         )
+
+
+# ============================================================
+# LIST DOCUMENTS
+# ============================================================
+
+@app.get("/documents")
+def list_documents():
+
+    all_chunks = _load_all_documents()
+
+    doc_stats = defaultdict(lambda: {"chunks": 0, "pages": set()})
+
+    for chunk in all_chunks:
+        source = chunk.get("source", "Unknown")
+        doc_stats[source]["chunks"] += 1
+        page = chunk.get("page_number")
+        if page is not None:
+            doc_stats[source]["pages"].add(page)
+
+    documents = [
+        {
+            "name": name,
+            "chunks": stats["chunks"],
+            "pages": len(stats["pages"]) if stats["pages"] else None,
+        }
+        for name, stats in doc_stats.items()
+    ]
+
+    documents.sort(key=lambda d: d["name"].lower())
+
+    total_chunks = sum(d["chunks"] for d in documents)
+
+    return {
+        "documents": documents,
+        "total_documents": len(documents),
+        "total_chunks": total_chunks,
+    }
+
+
+# ============================================================
+# DELETE DOCUMENT
+# ============================================================
+
+@app.delete("/documents/{document_name}")
+def delete_document(document_name: str):
+
+    result = client.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=1000,
+        with_payload=True,
+    )
+
+    ids_to_delete = [
+        point.id
+        for point in result[0]
+        if point.payload.get("source") == document_name
+    ]
+
+    if not ids_to_delete:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{document_name}' not found."
+        )
+
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=ids_to_delete,
+    )
+
+    return {
+        "message": f"Deleted {len(ids_to_delete)} chunks for '{document_name}'.",
+        "deleted_chunks": len(ids_to_delete),
+    }
 
 
 # ============================================================
