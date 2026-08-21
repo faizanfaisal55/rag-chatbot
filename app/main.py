@@ -1,7 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-
 import os
 import shutil
 import traceback
@@ -37,7 +36,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "http://127.0.0.1:5173"
+        "http://127.0.0.1:5173",
+        "https://rag-chatbot-frontend-nu.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -217,18 +217,25 @@ async def upload_file(file: UploadFile = File(...)):
         print("File saved:", file_path)
 
         # ----------------------------------------------------
-        # STEP 2 — Extract content (format-aware)
+        # STEP 2 — Extract content
         # ----------------------------------------------------
 
         print(f"\n[2/4] Extracting content ({file_ext})...")
 
         if file_ext == ".pdf":
+
             pages = load_pdf_pages(file_path)
+
         elif file_ext in (".txt", ".md"):
+
             pages = load_text_file(file_path)
+
         elif file_ext == ".docx":
+
             pages = load_docx_file(file_path)
+
         else:
+
             raise HTTPException(
                 status_code=400,
                 detail=f"No loader implemented for {file_ext} files."
@@ -299,6 +306,7 @@ async def upload_file(file: UploadFile = File(...)):
         print("Error message:", str(e))
 
         print("\nFULL TRACEBACK:")
+
         traceback.print_exc()
 
         print("=" * 70 + "\n")
@@ -343,13 +351,18 @@ async def upload_url(request: UrlUploadRequest):
         print("\n[1/3] Fetching and extracting page content...")
 
         try:
+
             pages = load_web_page(url)
+
         except ValueError as e:
+
             raise HTTPException(
                 status_code=400,
                 detail=str(e)
             )
+
         except requests.exceptions.RequestException as e:
+
             raise HTTPException(
                 status_code=400,
                 detail=f"Could not fetch URL: {str(e)}"
@@ -389,6 +402,7 @@ async def upload_url(request: UrlUploadRequest):
         )
 
         page_title = get_page_title(url)
+
         source_name = f"{page_title} ({url})"
 
         total_vectors = store_vectors(
@@ -423,6 +437,7 @@ async def upload_url(request: UrlUploadRequest):
         print("Error message:", str(e))
 
         print("\nFULL TRACEBACK:")
+
         traceback.print_exc()
 
         print("=" * 70 + "\n")
@@ -442,12 +457,24 @@ def list_documents():
 
     all_chunks = _load_all_documents()
 
-    doc_stats = defaultdict(lambda: {"chunks": 0, "pages": set()})
+    doc_stats = defaultdict(
+        lambda: {
+            "chunks": 0,
+            "pages": set()
+        }
+    )
 
     for chunk in all_chunks:
-        source = chunk.get("source", "Unknown")
+
+        source = chunk.get(
+            "source",
+            "Unknown"
+        )
+
         doc_stats[source]["chunks"] += 1
+
         page = chunk.get("page_number")
+
         if page is not None:
             doc_stats[source]["pages"].add(page)
 
@@ -455,14 +482,23 @@ def list_documents():
         {
             "name": name,
             "chunks": stats["chunks"],
-            "pages": len(stats["pages"]) if stats["pages"] else None,
+            "pages": (
+                len(stats["pages"])
+                if stats["pages"]
+                else None
+            ),
         }
         for name, stats in doc_stats.items()
     ]
 
-    documents.sort(key=lambda d: d["name"].lower())
+    documents.sort(
+        key=lambda d: d["name"].lower()
+    )
 
-    total_chunks = sum(d["chunks"] for d in documents)
+    total_chunks = sum(
+        d["chunks"]
+        for d in documents
+    )
 
     return {
         "documents": documents,
@@ -491,6 +527,7 @@ def delete_document(document_name: str):
     ]
 
     if not ids_to_delete:
+
         raise HTTPException(
             status_code=404,
             detail=f"Document '{document_name}' not found."
@@ -502,7 +539,10 @@ def delete_document(document_name: str):
     )
 
     return {
-        "message": f"Deleted {len(ids_to_delete)} chunks for '{document_name}'.",
+        "message": (
+            f"Deleted {len(ids_to_delete)} chunks "
+            f"for '{document_name}'."
+        ),
         "deleted_chunks": len(ids_to_delete),
     }
 
@@ -519,6 +559,7 @@ def chat(request: ChatRequest):
     # --------------------------------------------------------
 
     if not request.question or not request.question.strip():
+
         raise HTTPException(
             status_code=400,
             detail="Question cannot be empty."
@@ -536,11 +577,6 @@ def chat(request: ChatRequest):
 
         # ----------------------------------------------------
         # Prepare conversation history
-        #
-        # IMPORTANT:
-        # We do NOT use rewrite_question here.
-        #
-        # ask_rag() handles the conversation history itself.
         # ----------------------------------------------------
 
         history = request.history[-8:]
@@ -559,7 +595,10 @@ def chat(request: ChatRequest):
                 "text": text
             })
 
-        print("\nConversation messages:", len(history_data))
+        print(
+            "\nConversation messages:",
+            len(history_data)
+        )
 
         # ----------------------------------------------------
         # Run RAG
@@ -575,6 +614,7 @@ def chat(request: ChatRequest):
         # ----------------------------------------------------
 
         if not result:
+
             raise Exception(
                 "RAG pipeline returned no result."
             )
@@ -613,10 +653,18 @@ def chat(request: ChatRequest):
         print("CHAT ERROR")
         print("=" * 70)
 
-        print("Error type:", type(e).__name__)
-        print("Error message:", str(e))
+        print(
+            "Error type:",
+            type(e).__name__
+        )
+
+        print(
+            "Error message:",
+            str(e)
+        )
 
         print("\nFULL TRACEBACK:")
+
         traceback.print_exc()
 
         print("=" * 70 + "\n")
